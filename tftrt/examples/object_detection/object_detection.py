@@ -17,6 +17,8 @@
 
 import argparse
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1' 
+import csv
 import logging
 import time
 from functools import partial
@@ -29,6 +31,7 @@ from tensorflow.python.saved_model import signature_constants
 from tensorflow.python.saved_model import tag_constants
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
+tf.get_logger().setLevel('INFO')
 
 logging.disable(logging.WARNING)
 
@@ -38,7 +41,7 @@ def get_dataset(images_dir,
                 batch_size,
                 use_synthetic,
                 input_size,
-                dtype=tf.float32):
+                dtype=tf.uint8):
   image_ids = None
   num_steps = None
   if use_synthetic:
@@ -73,8 +76,12 @@ def get_dataset(images_dir,
     dataset = dataset.repeat(count=1)
   return dataset, image_ids, num_steps
 
+def get_func_from_saved_model_org(saved_model_dir):
+  graph_func = tf.saved_model.load(saved_model_dir)
+  return graph_func
 
 def get_func_from_saved_model(saved_model_dir):
+  # graph_func = tf.saved_model.load(saved_model_dir)
   saved_model_loaded = tf.saved_model.load(
       saved_model_dir, tags=[tag_constants.SERVING])
   graph_func = saved_model_loaded.signatures[
@@ -101,7 +108,7 @@ def get_graph_func(input_saved_model_dir,
   returns: TF function that is ready to run for inference
   """
   start_time = time.time()
-  graph_func = get_func_from_saved_model(input_saved_model_dir)
+  graph_func = get_func_from_saved_model_org(input_saved_model_dir)
   if use_trt:
     converter = trt.TrtGraphConverterV2(
         input_saved_model_dir=input_saved_model_dir,
@@ -160,13 +167,14 @@ def run_inference(graph_func,
   iter_times = []
   initial_time = time.time()
 
-  input_dtype = graph_func.inputs[0].dtype
+  input_dtype = tf.uint8
   dataset, image_ids, num_steps = get_dataset(images_dir=data_dir,
                                               annotation_path=annotation_path,
                                               batch_size=batch_size,
                                               use_synthetic=use_synthetic,
                                               input_size=input_size,
                                               dtype=input_dtype)
+  logging.disable(logging.WARNING)
   if mode == 'validation':
     for i, batch_images in enumerate(dataset):
       start_time = time.time()
@@ -235,13 +243,14 @@ def eval_model(predictions, image_ids, annotation_path, output_saved_model_dir):
     
   coco = COCO(annotation_file=annotation_path)
   coco_detections = []
+  logging.disable(logging.WARNING)
   for i, image_id in enumerate(image_ids):
     coco_img = coco.imgs[image_id]
     image_width = coco_img['width']
     image_height = coco_img['height']
 
     for j in range(int(predictions['num_detections'][i])):
-      bbox = predictions['boxes'][i][j]
+      bbox = predictions['detection_boxes'][i][j]
       y1, x1, y2, x2 = list(bbox)
       bbox_coco_fmt = [
         x1 * image_width,  # x0
@@ -251,9 +260,9 @@ def eval_model(predictions, image_ids, annotation_path, output_saved_model_dir):
       ]
       coco_detection = {
         'image_id': image_id,
-        'category_id': int(predictions['classes'][i][j]),
+        'category_id': int(predictions['detection_classes'][i][j]),
         'bbox': [int(coord) for coord in bbox_coco_fmt],
-        'score': float(predictions['scores'][i][j])
+        'score': float(predictions['detection_scores'][i][j])
       }
       coco_detections.append(coco_detection)
 
@@ -276,7 +285,7 @@ def eval_model(predictions, image_ids, annotation_path, output_saved_model_dir):
   eval.accumulate()
   eval.summarize()
 
-  return eval.stats[0]
+  return eval.stats
 
 
 def config_gpu_memory(gpu_mem_cap):
@@ -374,6 +383,10 @@ if __name__ == '__main__':
   parser.add_argument('--target_duration', type=int, default=None,
                       help='If set, script will run for specified'
                       'number of seconds.')
+  parser.add_argument('--model_name', type=str, default='',
+                      help='Output model name')
+  parser.add_argument('--output_csv', type=str, default=None,
+                      help='Output csv result file.')
   args = parser.parse_args()
 
   if args.precision != 'FP32' and not args.use_trt:
@@ -444,11 +457,37 @@ if __name__ == '__main__':
                 target_duration=args.target_duration)
   print('Results:')
   if args.mode == 'validation':
-    mAP = eval_model(predictions, image_ids, args.annotation_path, args.output_saved_model_dir)
-    print('  mAP: %f' % mAP)
+    stats = eval_model(predictions, image_ids, args.annotation_path, args.output_saved_model_dir)
+    print('  mAP: %f' % stats[0])
   print('  images/sec: %d' % results['images_per_sec'])
   print('  99th_percentile(ms): %.2f' % results['99th_percentile'])
   print('  total_time(s): %.1f' % results['total_time'])
   print('  latency_mean(ms): %.2f' % results['latency_mean'])
   print('  latency_median(ms): %.2f' % results['latency_median'])
   print('  latency_min(ms): %.2f' % results['latency_min'])
+
+  if args.output_csv is not None:
+    print('Output result')
+    output = []
+    # Model name
+    output.append(args.model_name)
+    # Input size
+    output.append(str(args.input_size) + "x" + str(args.input_size))
+    # Convert
+    convert_string = "FP32"
+    if args.use_trt:
+      convert_string = "TF-TRT " + args.precision
+    output.append(convert_string)
+    if args.mode == 'validation':
+      # coco result
+      output.extend(stats)
+    output.append(results['images_per_sec'])
+    output.append(results['99th_percentile'])
+    output.append(results['total_time'])
+    output.append(results['latency_mean'])
+    output.append(results['latency_median'])
+    output.append(results['latency_min'])
+
+    with open(args.output_csv, 'a') as f:
+      writer = csv.writer(f)
+      writer.writerow(output)
