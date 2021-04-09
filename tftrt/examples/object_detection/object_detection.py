@@ -47,7 +47,7 @@ def get_dataset(images_dir,
   if use_synthetic:
     features = np.random.normal(
       loc=112, scale=70,
-      size=(batch_size, input_size, input_size, 3)).astype(np.float32)
+      size=(batch_size, input_size[0], input_size[1], 3)).astype(np.float32)
     features = np.clip(features, 0.0, 255.0).astype(dtype.as_numpy_dtype)
     features = tf.convert_to_tensor(value=tf.compat.v1.get_variable(
       "features", initializer=tf.constant(features)))
@@ -68,7 +68,7 @@ def get_dataset(images_dir,
       image = tf.io.read_file(path)
       image = tf.image.decode_jpeg(image, channels=3)
       if input_size is not None:
-        image = tf.image.resize(image, size=(input_size, input_size))
+        image = tf.image.resize(image, size=(input_size[0], input_size[1]))
         image = tf.cast(image, tf.uint8)
       return image
     dataset = dataset.map(map_func=preprocess_fn, num_parallel_calls=8)
@@ -333,7 +333,7 @@ if __name__ == '__main__':
                       help='Directory containing the input saved model.')
   parser.add_argument('--output_saved_model_dir', type=str, default=None,
                       help='Directory in which the converted model is saved')
-  parser.add_argument('--input_size', type=int, default=640,
+  parser.add_argument('--input_size',  nargs='+', type=int, default=[640, 640],
                       help='Size of input images expected by the model')
   parser.add_argument('--data_dir', type=str, default=None,
                       help='Directory containing validation set'
@@ -472,7 +472,7 @@ if __name__ == '__main__':
     # Model name
     output.append(args.model_name)
     # Input size
-    output.append(str(args.input_size) + "x" + str(args.input_size))
+    output.append(str(args.input_size[0]) + "x" + str(args.input_size[1]))
     # Convert
     convert_string = "FP32"
     if args.use_trt:
