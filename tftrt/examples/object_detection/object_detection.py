@@ -108,8 +108,10 @@ def get_graph_func(input_saved_model_dir,
   returns: TF function that is ready to run for inference
   """
   start_time = time.time()
-  graph_func = get_func_from_saved_model_org(input_saved_model_dir)
-  if use_trt:
+  graph_func = None
+  if not use_trt:
+    graph_func = get_func_from_saved_model_org(input_saved_model_dir)
+  else:
     converter = trt.TrtGraphConverterV2(
         input_saved_model_dir=input_saved_model_dir,
         conversion_params=conversion_params,
