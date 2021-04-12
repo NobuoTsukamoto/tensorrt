@@ -175,17 +175,25 @@ def run_inference(graph_func,
                                               input_size=input_size,
                                               dtype=input_dtype)
   logging.disable(logging.WARNING)
+
+  detection_key = ['detection_boxes', 'detection_classes', 'num_detections', 'detection_scores']
+  
   if mode == 'validation':
     for i, batch_images in enumerate(dataset):
       start_time = time.time()
       batch_preds = graph_func(batch_images)
       end_time = time.time()
       iter_times.append(end_time - start_time)
+
+      for key in list(batch_preds.keys()):
+        if key not in detection_key:
+          del batch_preds[key]
+
       for key in batch_preds.keys():
         if key not in predictions:
-          predictions[key] = [batch_preds[key]]
+          predictions[key] = [batch_preds[key].numpy()]
         else:
-          predictions[key].append(batch_preds[key])
+          predictions[key].append(batch_preds[key].numpy())
       if (i + 1) % display_every == 0:
         print("  step %03d/%03d, iter_time(ms)=%.0f" %
               (i+1, num_steps, iter_times[-1]*1000))
@@ -224,19 +232,7 @@ def run_inference(graph_func,
 
 
 def eval_model(predictions, image_ids, annotation_path, output_saved_model_dir):
-  name_map = {
-      'output_0':'boxes',
-      'output_1':'classes',
-      'output_2':'num_detections',
-      'output_3':'scores',
-  }
-  for old_key in list(predictions.keys()):
-    if old_key in name_map:
-      new_key = name_map[old_key]
-      predictions[new_key] = predictions[old_key]
-      del predictions[old_key]
   for key in predictions:
-    predictions[key] = [t.numpy() for t in predictions[key]]
     predictions[key] = np.vstack(predictions[key])
     if key == 'num_detections':
       predictions[key] = predictions[key].ravel()
