@@ -472,7 +472,7 @@ if __name__ == '__main__':
     # Input size
     output.append(str(args.input_size[0]) + "x" + str(args.input_size[1]))
     # Convert
-    convert_string = "FP32"
+    convert_string = "Native FP32"
     if args.use_trt:
       convert_string = "TF-TRT " + args.precision
     output.append(convert_string)
